@@ -1,0 +1,20 @@
+{
+  "name": "railload",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/samaybar/railload#readme",
+  "bugs": {
+    "url": "https://github.com/samaybar/railload/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samaybar/railload.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.mjs",
+   "scripts": {
+    "start": "node index.mjs"
+  }
+}
