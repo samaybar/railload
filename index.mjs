@@ -1,55 +1,57 @@
 import http from "http";
-import httpProxy from "http-proxy";
+import { request as httpRequest } from "http";
 
 const PORT = process.env.PORT || 8080;
 
-// Example: "http://service-a.railway.internal:8080,http://service-b.railway.internal:8080"
-const targetsEnv = process.env.TARGETS;
-if (!targetsEnv) {
-  throw new Error("TARGETS env var is required, e.g. http://a:8080,http://b:8080");
+const rawTargets = process.env.TARGETS || "";
+const targets = rawTargets
+  .split(",")
+  .map(t => t.trim())
+  .filter(Boolean);
+
+if (!targets.length) {
+  throw new Error("TARGETS env var is required");
 }
 
-const targets = targetsEnv.split(",").map(t => t.trim()).filter(Boolean);
+console.log("LB targets:", targets);
 
-if (targets.length === 0) {
-  throw new Error("TARGETS env var must contain at least one URL");
+let i = 0;
+function pickTarget() {
+  const t = targets[i];
+  i = (i + 1) % targets.length;
+  return t;
 }
 
-console.log("Internal LB targets:");
-targets.forEach(t => console.log(" -", t));
+const server = http.createServer((clientReq, clientRes) => {
+  const target = pickTarget();
+  console.log(`→ ${clientReq.method} ${clientReq.url} -> ${target}`);
 
-const proxy = httpProxy.createProxyServer({});
-let currentIndex = 0;
+  const url = new URL(clientReq.url, target);
 
-// Round-robin selector
-function getNextTarget() {
-  const target = targets[currentIndex];
-  currentIndex = (currentIndex + 1) % targets.length;
-  return target;
-}
+  const options = {
+    hostname: url.hostname,
+    port: url.port || 80,
+    path: url.pathname + url.search,
+    method: clientReq.method,
+    headers: clientReq.headers
+  };
 
-const server = http.createServer((req, res) => {
-  const target = getNextTarget();
-  console.log(`→ ${req.method} ${req.url} -> ${target}`);
+  const proxyReq = httpRequest(options, proxyRes => {
+    clientRes.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+    proxyRes.pipe(clientRes);
+  });
 
-  proxy.web(req, res, { target }, err => {
-    console.error("Proxy error:", err?.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { "Content-Type": "text/plain" });
+  proxyReq.on("error", err => {
+    console.error("Proxy error:", err.code, err.message);
+    if (!clientRes.headersSent) {
+      clientRes.writeHead(502, { "Content-Type": "text/plain" });
     }
-    res.end("Bad gateway (internal LB error)");
+    clientRes.end("Bad gateway (internal LB error)");
   });
-});
 
-// Handle WebSocket upgrade if needed
-server.on("upgrade", (req, socket, head) => {
-  const target = getNextTarget();
-  proxy.ws(req, socket, head, { target }, err => {
-    console.error("WS proxy error:", err?.message);
-    socket.destroy();
-  });
+  clientReq.pipe(proxyReq);
 });
 
 server.listen(PORT, "::", () => {
-  console.log(`Internal load balancer listening on port ${PORT}`);
+  console.log(`Internal LB running on port ${PORT}`);
 });
